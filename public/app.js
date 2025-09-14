@@ -9,6 +9,11 @@ class HebrewChatWidget {
         this.sessionId = this.generateSessionId();
         this.messages = [];
         this.isProcessing = false;
+        this.isListening = false;
+        
+        // Speech Recognition
+        this.recognition = null;
+        this.initSpeechRecognition();
         
         // DOM elements
         this.elements = {
@@ -21,7 +26,8 @@ class HebrewChatWidget {
             loadingIndicator: document.getElementById('loadingIndicator'),
             errorToast: document.getElementById('errorToast'),
             errorMessage: document.getElementById('errorMessage'),
-            errorClose: document.getElementById('errorClose')
+            errorClose: document.getElementById('errorClose'),
+            circleHint: document.getElementById('circleHint')
         };
         
         this.init();
@@ -37,12 +43,65 @@ class HebrewChatWidget {
     }
     
     /**
+     * Initialize Speech Recognition
+     */
+    initSpeechRecognition() {
+        // Check for Speech Recognition support
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        
+        if (!SpeechRecognition) {
+            console.warn('Speech Recognition not supported in this browser');
+            return;
+        }
+        
+        this.recognition = new SpeechRecognition();
+        this.recognition.continuous = false;
+        this.recognition.interimResults = false;
+        this.recognition.lang = 'he-IL'; // Hebrew language
+        this.recognition.maxAlternatives = 1;
+        
+        // Event handlers
+        this.recognition.onstart = () => {
+            console.log('🎤 Voice recognition started');
+            this.setListeningState(true);
+        };
+        
+        this.recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            console.log('🗣️ Voice input:', transcript);
+            this.handleVoiceInput(transcript);
+        };
+        
+        this.recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            this.setListeningState(false);
+            
+            let errorMessage = 'שגיאה בזיהוי קול. אנא נסו שוב.';
+            
+            if (event.error === 'not-allowed') {
+                errorMessage = 'נדרשת הרשאה למיקרופון. אנא אפשרו גישה למיקרופון ונסו שוב.';
+            } else if (event.error === 'no-speech') {
+                errorMessage = 'לא זוהה קול. אנא נסו שוב.';
+            } else if (event.error === 'network') {
+                errorMessage = 'שגיאת רשת. בדקו את החיבור לאינטרנט.';
+            }
+            
+            this.showError(errorMessage);
+        };
+        
+        this.recognition.onend = () => {
+            console.log('🔇 Voice recognition ended');
+            this.setListeningState(false);
+        };
+    }
+    
+    /**
      * Bind event listeners
      */
     bindEvents() {
-        // Start chat button
+        // Start chat button - now starts voice recording
         this.elements.startChatBtn.addEventListener('click', () => {
-            this.focusInput();
+            this.startVoiceRecording();
         });
         
         // Chat form submission
@@ -109,17 +168,120 @@ class HebrewChatWidget {
     }
     
     /**
-     * Handle sending a message
+     * Start voice recording
      */
-    async handleSendMessage() {
-        const text = this.elements.messageInput.value.trim();
+    startVoiceRecording() {
+        if (!this.recognition) {
+            this.showError('זיהוי קול אינו נתמך בדפדפן זה. אנא השתמשו בכתיבה.');
+            this.focusInput();
+            return;
+        }
         
+        if (this.isListening) {
+            this.stopVoiceRecording();
+            return;
+        }
+        
+        if (this.isProcessing) {
+            this.showError('מעבדים בקשה קודמת. אנא המתינו.');
+            return;
+        }
+        
+        try {
+            this.recognition.start();
+        } catch (error) {
+            console.error('Error starting voice recognition:', error);
+            this.showError('שגיאה בהתחלת זיהוי קול. אנא נסו שוב.');
+        }
+    }
+    
+    /**
+     * Stop voice recording
+     */
+    stopVoiceRecording() {
+        if (this.recognition && this.isListening) {
+            this.recognition.stop();
+        }
+    }
+    
+    /**
+     * Handle voice input
+     */
+    async handleVoiceInput(transcript) {
+        if (!transcript || transcript.trim().length === 0) {
+            this.showError('לא זוהה טקסט. אנא נסו שוב.');
+            return;
+        }
+        
+        console.log('📝 Processing voice transcript:', transcript);
+        
+        // Add user message and send to API
+        await this.sendMessage(transcript.trim());
+    }
+    
+    /**
+     * Set listening state and update UI
+     */
+    setListeningState(listening) {
+        this.isListening = listening;
+        this.updateVoiceButtonUI();
+    }
+    
+    /**
+     * Update voice button UI based on state
+     */
+    updateVoiceButtonUI() {
+        const button = this.elements.startChatBtn;
+        const icon = button.querySelector('.chat-icon');
+        const hint = this.elements.circleHint;
+        
+        if (this.isListening) {
+            button.classList.add('listening');
+            button.setAttribute('aria-label', 'הקלטה פעילה - לחצו לעצירה');
+            
+            // Update hint text
+            if (hint) {
+                hint.textContent = 'מקשיב... דברו עכשיו';
+            }
+            
+            // Change to microphone icon while listening
+            if (icon) {
+                icon.innerHTML = `
+                    <circle cx="12" cy="12" r="3" fill="currentColor"/>
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" stroke="currentColor" stroke-width="2" fill="none"/>
+                `;
+            }
+        } else {
+            button.classList.remove('listening');
+            button.setAttribute('aria-label', 'התחל צ׳אט קולי');
+            
+            // Update hint text
+            if (hint) {
+                hint.textContent = 'לחצו כדי לדבר איתי';
+            }
+            
+            // Change back to chat icon
+            if (icon) {
+                icon.innerHTML = `
+                    <path d="M8.5 19H8C4.13401 19 1 15.866 1 12C1 8.13401 4.13401 5 8 5H16C19.866 5 23 8.13401 23 12C23 15.866 19.866 19 16 19H15.5M8.5 19L12 22.5L15.5 19M8.5 19H15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="9" cy="12" r="1" fill="currentColor"/>
+                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
+                    <circle cx="15" cy="12" r="1" fill="currentColor"/>
+                `;
+            }
+        }
+    }
+    
+    /**
+     * Send message (unified method for text and voice input)
+     */
+    async sendMessage(text) {
         if (!text || this.isProcessing) {
             return;
         }
         
-        // Clear input and disable form
-        this.elements.messageInput.value = '';
+        // Set processing state
         this.setProcessing(true);
         
         try {
@@ -142,8 +304,27 @@ class HebrewChatWidget {
             this.showError(error.message || 'שגיאה בשליחת ההודעה. אנא נסו שוב.');
         } finally {
             this.setProcessing(false);
-            this.elements.messageInput.focus();
         }
+    }
+    
+    /**
+     * Handle sending a message from text input
+     */
+    async handleSendMessage() {
+        const text = this.elements.messageInput.value.trim();
+        
+        if (!text) {
+            return;
+        }
+        
+        // Clear input
+        this.elements.messageInput.value = '';
+        
+        // Send message using unified method
+        await this.sendMessage(text);
+        
+        // Focus input for next message
+        this.elements.messageInput.focus();
     }
     
     /**
