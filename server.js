@@ -303,6 +303,10 @@ wss.on('connection', (ws, req) => {
         punctuate: true,
         interim_results: true,
         utterance_end_ms: 2000,
+        vad_events: true,
+        endpointing: 300,
+        no_delay: false,
+        keywords: ['שלום', 'הי', 'אהלן', 'מה', 'איך', 'למה', 'מתי', 'איפה'],
       });
 
       connectionInfo.deepgramConnection = deepgramLive;
@@ -348,38 +352,58 @@ wss.on('connection', (ws, req) => {
     }
   }
 
-  // Handle incoming audio data
+  // Handle incoming messages
   ws.on('message', (data) => {
-    if (Buffer.isBuffer(data)) {
-      // Audio data received
-      if (connectionInfo.deepgramConnection && connectionInfo.deepgramConnection.getReadyState() === 1) {
-        connectionInfo.deepgramConnection.send(data);
-        connectionInfo.isTranscribing = true;
+    try {
+      // Check if it's JSON message (text) or binary data (audio)
+      if (Buffer.isBuffer(data)) {
+        // Audio data received
+        if (connectionInfo.deepgramConnection && connectionInfo.deepgramConnection.getReadyState() === 1) {
+          connectionInfo.deepgramConnection.send(data);
+          connectionInfo.isTranscribing = true;
+        } else {
+          // Fallback: mock transcription for audio data
+          setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: 'transcript_partial',
+                text: 'תמלול מדומה...',
+                confidence: 0.8,
+                language: lang
+              }));
+              
+              setTimeout(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({
+                    type: 'transcript_final',
+                    text: 'שאלה מדומה מקובץ השמע',
+                    confidence: 0.85,
+                    language: lang
+                  }));
+                  handleFinalTranscript(ws, 'שאלה מדומה מקובץ השמע', sessionId);
+                }
+              }, 1500);
+            }
+          }, 500);
+        }
       } else {
-        // Fallback: mock transcription
-        setTimeout(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'transcript_partial',
-              text: 'תמלול מדומה...',
-              confidence: 0.8,
-              language: lang
-            }));
-            
-            setTimeout(() => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                  type: 'transcript_final',
-                  text: 'שאלה מדומה מקובץ השמע',
-                  confidence: 0.85,
-                  language: lang
-                }));
-                handleFinalTranscript(ws, 'שאלה מדומה מקובץ השמע', sessionId);
-              }
-            }, 1500);
+        // Text message (JSON)
+        const message = JSON.parse(data.toString());
+        
+        if (message.type === 'final_transcript' && message.text) {
+          console.log(`📝 Final transcript from client: "${message.text}" (session: ${sessionId})`);
+          
+          // Validate transcript quality
+          const transcript = message.text.trim();
+          if (transcript.length >= 3) {
+            handleFinalTranscript(ws, transcript, sessionId);
+          } else {
+            console.log('⚠️  Transcript too short, ignoring:', transcript);
           }
-        }, 500);
+        }
       }
+    } catch (error) {
+      console.error('Error processing WebSocket message:', error);
     }
   });
 

@@ -26,6 +26,13 @@ class HebrewChatWidget {
         this.audioPlayer = new Audio();
         this.audioPlayer.preload = 'auto';
         
+        // Speech processing
+        this.silenceTimer = null;
+        this.lastSpeechTime = 0;
+        this.currentTranscript = '';
+        this.lastProcessedTranscript = '';
+        this.isCurrentlySpeaking = false;
+        
         // DOM elements
         this.elements = {
             startChatBtn: document.getElementById('startChatBtn'),
@@ -38,7 +45,9 @@ class HebrewChatWidget {
             errorToast: document.getElementById('errorToast'),
             errorMessage: document.getElementById('errorMessage'),
             errorClose: document.getElementById('errorClose'),
-            circleHint: document.getElementById('circleHint')
+            circleHint: document.getElementById('circleHint'),
+            voiceControls: document.getElementById('voiceControls'),
+            pushToTalkBtn: document.getElementById('pushToTalkBtn')
         };
         
         this.init();
@@ -145,6 +154,32 @@ class HebrewChatWidget {
         this.elements.errorClose.addEventListener('click', () => {
             this.hideError();
         });
+        
+        // Push-to-talk button events
+        if (this.elements.pushToTalkBtn) {
+            this.elements.pushToTalkBtn.addEventListener('mousedown', () => {
+                this.startPushToTalk();
+            });
+            
+            this.elements.pushToTalkBtn.addEventListener('mouseup', () => {
+                this.stopPushToTalk();
+            });
+            
+            this.elements.pushToTalkBtn.addEventListener('mouseleave', () => {
+                this.stopPushToTalk();
+            });
+            
+            // Touch events for mobile
+            this.elements.pushToTalkBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.startPushToTalk();
+            });
+            
+            this.elements.pushToTalkBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                this.stopPushToTalk();
+            });
+        }
         
         // Auto-hide error toast after 5 seconds
         let errorTimeout;
@@ -300,13 +335,19 @@ class HebrewChatWidget {
             console.log('🔵 Starting live voice call...');
             this.setCallState('connecting');
             
-            // Request microphone permissions
+            // Request microphone permissions with enhanced audio processing
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: { 
                     sampleRate: 16000,
                     channelCount: 1,
                     echoCancellation: true,
-                    noiseSuppression: true
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    googEchoCancellation: true,
+                    googAutoGainControl: true,
+                    googNoiseSuppression: true,
+                    googHighpassFilter: true,
+                    googTypingNoiseDetection: true
                 } 
             });
             
@@ -321,6 +362,11 @@ class HebrewChatWidget {
             
             this.setCallState('live');
             this.addSystemMessage('שיחה החלה - דברו בחופשיות');
+            
+            // Show voice controls
+            if (this.elements.voiceControls) {
+                this.elements.voiceControls.style.display = 'block';
+            }
             
         } catch (error) {
             console.error('Error starting live call:', error);
@@ -344,6 +390,15 @@ class HebrewChatWidget {
         
         this.setCallState('ended');
         
+        // Clean up speech processing
+        if (this.silenceTimer) {
+            clearTimeout(this.silenceTimer);
+            this.silenceTimer = null;
+        }
+        this.currentTranscript = '';
+        this.lastProcessedTranscript = '';
+        this.isCurrentlySpeaking = false;
+        
         // Stop speech recognition
         if (this.recognition && this.isListening) {
             this.recognition.stop();
@@ -362,6 +417,11 @@ class HebrewChatWidget {
         // Stop audio playback
         if (!this.audioPlayer.paused) {
             this.audioPlayer.pause();
+        }
+        
+        // Hide voice controls
+        if (this.elements.voiceControls) {
+            this.elements.voiceControls.style.display = 'none';
         }
         
         this.setCallState('idle');
@@ -415,15 +475,25 @@ class HebrewChatWidget {
     handleWebSocketMessage(data) {
         switch (data.type) {
             case 'transcript_partial':
-                this.updateLiveTranscript(data.text, false);
+                // Only show partial transcripts if they're substantial
+                if (data.text && data.text.length > 2 && data.confidence > 0.5) {
+                    this.updateLiveTranscript(data.text, false);
+                }
                 break;
                 
             case 'transcript_final':
-                this.updateLiveTranscript(data.text, true);
+                // Only process final transcripts if they're substantial
+                if (data.text && data.text.length > 2 && data.confidence > 0.4) {
+                    this.updateLiveTranscript(data.text, true);
+                }
                 break;
                 
             case 'response':
                 this.handleLiveResponse(data);
+                break;
+                
+            case 'connected':
+                console.log('✅ WebSocket connected:', data.message);
                 break;
                 
             case 'error':
@@ -464,29 +534,176 @@ class HebrewChatWidget {
         this.recognition.continuous = true;
         this.recognition.interimResults = true;
         
+        // Add silence detection
+        this.silenceTimer = null;
+        this.lastSpeechTime = 0;
+        this.currentTranscript = '';
+        this.isCurrentlySpeaking = false;
+        
         this.recognition.onresult = (event) => {
             let interimTranscript = '';
             let finalTranscript = '';
             
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
+                const transcript = result[0].transcript.trim();
+                const confidence = result[0].confidence || 0.7;
+                
+                // Filter out very low confidence or very short transcripts (likely noise)
+                if (transcript.length < 2 || confidence < 0.4) {
+                    continue;
+                }
+                
                 if (result.isFinal) {
-                    finalTranscript += result[0].transcript;
+                    finalTranscript += transcript;
                 } else {
-                    interimTranscript += result[0].transcript;
+                    interimTranscript += transcript;
                 }
             }
             
-            if (interimTranscript) {
+            // Update last speech time
+            if (interimTranscript || finalTranscript) {
+                this.lastSpeechTime = Date.now();
+                this.isCurrentlySpeaking = true;
+                
+                // Clear any existing silence timer
+                if (this.silenceTimer) {
+                    clearTimeout(this.silenceTimer);
+                    this.silenceTimer = null;
+                }
+                
+                // Set silence detection timer (2 seconds of silence)
+                this.silenceTimer = setTimeout(() => {
+                    this.handleSilenceDetected();
+                }, 2000);
+            }
+            
+            // Only show transcripts that are substantial enough
+            if (interimTranscript && interimTranscript.length > 2) {
+                this.currentTranscript = interimTranscript;
                 this.updateLiveTranscript(interimTranscript, false);
             }
             
-            if (finalTranscript) {
+            if (finalTranscript && finalTranscript.length > 2) {
+                this.currentTranscript = finalTranscript;
                 this.updateLiveTranscript(finalTranscript, true);
+                this.processFinalTranscript(finalTranscript);
             }
         };
         
         this.recognition.start();
+    }
+    
+    /**
+     * Handle silence detection - user stopped speaking
+     */
+    handleSilenceDetected() {
+        console.log('🔇 Silence detected');
+        this.isCurrentlySpeaking = false;
+        
+        // If we have a current transcript that hasn't been processed, process it now
+        if (this.currentTranscript && this.currentTranscript.length > 3) {
+            console.log('📝 Processing transcript after silence:', this.currentTranscript);
+            this.processFinalTranscript(this.currentTranscript);
+            this.currentTranscript = '';
+        }
+        
+        // Clear silence timer
+        if (this.silenceTimer) {
+            clearTimeout(this.silenceTimer);
+            this.silenceTimer = null;
+        }
+    }
+    
+    /**
+     * Process final transcript and send to WebSocket
+     */
+    processFinalTranscript(transcript) {
+        if (!transcript || transcript.length < 3) {
+            return;
+        }
+        
+        // Avoid processing the same transcript multiple times
+        if (this.lastProcessedTranscript === transcript) {
+            return;
+        }
+        
+        this.lastProcessedTranscript = transcript;
+        console.log('🎯 Processing final transcript:', transcript);
+        
+        // Send via WebSocket if available
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                type: 'final_transcript',
+                text: transcript,
+                sessionId: this.sessionId,
+                timestamp: Date.now()
+            }));
+        }
+    }
+    
+    /**
+     * Start push-to-talk recording
+     */
+    startPushToTalk() {
+        if (!this.isInCall || this.isCurrentlySpeaking) {
+            return;
+        }
+        
+        console.log('🎤 Push-to-talk started');
+        this.isCurrentlySpeaking = true;
+        
+        // Visual feedback
+        if (this.elements.pushToTalkBtn) {
+            this.elements.pushToTalkBtn.classList.add('active');
+        }
+        
+        // Clear any existing transcript
+        this.currentTranscript = '';
+        
+        // Start recording if we have a media recorder
+        if (this.mediaRecorder && this.mediaRecorder.state === 'paused') {
+            this.mediaRecorder.resume();
+        }
+        
+        // Start speech recognition fresh
+        if (this.recognition) {
+            try {
+                this.recognition.stop();
+                setTimeout(() => {
+                    if (this.isCurrentlySpeaking) {
+                        this.recognition.start();
+                    }
+                }, 100);
+            } catch (error) {
+                console.error('Error restarting recognition:', error);
+            }
+        }
+    }
+    
+    /**
+     * Stop push-to-talk recording
+     */
+    stopPushToTalk() {
+        if (!this.isCurrentlySpeaking) {
+            return;
+        }
+        
+        console.log('🔇 Push-to-talk stopped');
+        
+        // Visual feedback
+        if (this.elements.pushToTalkBtn) {
+            this.elements.pushToTalkBtn.classList.remove('active');
+        }
+        
+        // Process any current transcript
+        setTimeout(() => {
+            if (this.currentTranscript && this.currentTranscript.length > 3) {
+                this.processFinalTranscript(this.currentTranscript);
+                this.currentTranscript = '';
+            }
+            this.isCurrentlySpeaking = false;
+        }, 500);
     }
     
     /**
