@@ -2,17 +2,66 @@
 
 A production-ready Hebrew chat widget with voice-to-text capabilities, running completely locally with no external dependencies.
 
-## Features
+## Current Status
 
-- 🎤 **Voice Input:** Browser-based speech recognition (Hebrew)
-- 🗣️ **Voice Chat Loop:** Click button → speak → get text response → repeat
+### ✅ Completed Features
+
+- 🎤 **Voice Input Recording:** Microphone button toggle for text input
+- 🗣️ **Voice Chat Loop:** Full conversation mode with call status indicators
+- 🔊 **Voice Response Playback:** Audio files + TTS fallback system
 - 🇮🇱 **Full RTL Hebrew support** with proper text direction
-- 💾 **Local Mock Database:** 50+ Hebrew Q&A pairs, no external API calls
-- 🎯 **Smart Keyword Matching:** Finds relevant answers with confidence scoring
+- 💾 **Local Mock Database:** 21 Hebrew Q&A pairs with voice URLs
+- 🎯 **Smart Keyword Matching:** Advanced Hebrew text processing with confidence scoring
 - 📱 **Responsive design** optimized for mobile and desktop
-- 🎨 **Beautiful gradient UI** with call status indicators
+- 🎨 **Beautiful gradient UI** with enhanced speaker buttons
 - ⚡ **Lightweight:** Vanilla JavaScript, no frameworks
 - ♿ **Accessibility features** (ARIA labels, keyboard navigation)
+- 🔍 **Comprehensive Debugging:** Detailed voice system logging and error handling
+
+### 🚧 Recently Enhanced
+
+- **Voice Input:** Browser-based speech recognition with improved error handling
+- **Speaker Buttons:** Blue gradient design, dynamic voice querying from database
+- **Audio Playback:** Enhanced with loading states and comprehensive fallback system
+- **UI/UX:** Removed clickable messages, streamlined to button-only voice interactions
+- **Error Handling:** Fixed microphone button false error messages
+
+## 📋 TODO / Future Roadmap
+
+### 🎯 High Priority
+
+- **🤖 GPT Integration:** Connect to GPT API to judge/validate/enhance answers from database
+  - Implement GPT-4 integration for answer quality assessment
+  - Add context-aware response improvement
+  - Smart fallback to GPT when database confidence is low
+
+- **🗄️ Real Database Connection:** Replace mock database with production database
+  - PostgreSQL/MySQL integration with connection pooling
+  - Database schema design for Q&A pairs with multilingual support
+  - Migration scripts from mock_db to real database
+  - Database optimization for Hebrew text search
+
+- **💾 IndexedDB Integration:** Add client-side caching and offline capability
+  - Cache frequently asked questions locally
+  - Offline mode support with IndexedDB storage
+  - Smart cache invalidation and synchronization
+  - Progressive Web App (PWA) capabilities
+
+### 🔧 Technical Enhancements
+
+- **Authentication & User Management:** User sessions and personalization
+- **Analytics Integration:** Track user interactions and optimize responses
+- **Multi-language Support:** Extend beyond Hebrew to Arabic, English
+- **Voice Synthesis:** Custom Hebrew TTS voices instead of browser default
+- **Real-time Updates:** WebSocket integration for live database updates
+
+### 🎨 UI/UX Improvements
+
+- **Chat History:** Persistent conversation history across sessions
+- **Message Actions:** Copy, share, favorite messages
+- **Typing Indicators:** Show when bot is "thinking"
+- **Rich Media Support:** Images, links, formatted text in responses
+- **Customizable Themes:** Light/dark mode, brand customization
 
 ## Quick Start (Local Development)
 
@@ -36,17 +85,25 @@ A production-ready Hebrew chat widget with voice-to-text capabilities, running c
 
 The application uses a completely local Q&A system (`mock_db.js`) with no external API calls. It includes:
 
-- **50+ Hebrew Q&A pairs** covering greetings, technology, food, travel, health, and sports
-- **Smart keyword matching** that finds relevant answers based on user questions  
+- **21 Hebrew Q&A pairs** covering greetings, Bezeq products (Be Fiber, gaming, security, streaming)
+- **Voice URL support** for audio responses with .wav file references
+- **Smart keyword matching** with advanced Hebrew text processing and confidence scoring
 - **Easy customization** - edit the `QA_DATABASE` object in `mock_db.js`
-- **Confidence scoring** and tagging system for answer quality
-- **Fallback responses** for unmatched queries
+- **Lead generation support** for contact information collection
+- **Fallback responses** for unmatched queries with intelligent defaults
+
+**Current Q&A Categories:**
+- Greetings (שלום, היי, בוקר טוב)
+- Bezeq Products (Be Fiber, פייבר, Mesh)
+- Technical Features (גיימינג, אבטחה, סטרימינג, עבודה מהבית)
+- Lead Generation (פניה, contact collection)
 
 **To add new Q&A entries:**
 ```javascript
 // In mock_db.js, add to QA_DATABASE:
 'your keyword': {
   answer: 'Your Hebrew answer here',
+  voiceUrl: '/voice/your_audio_file.wav', // Optional
   confidence: 0.9,
   tags: ['category', 'tag']
 }
@@ -70,6 +127,7 @@ The widget expects your external DB API to have an endpoint:
 {
   "answerId": "A123",
   "answerText": "הטקסט המוכן לתשובה",
+  "voiceUrl": "/voice/answer_audio.wav",
   "confidence": 0.95,
   "tags": ["category1", "category2"]
 }
@@ -79,6 +137,7 @@ The backend normalizes responses to:
 ```json
 {
   "answer": "הטקסט המוכן לתשובה",
+  "voiceUrl": "/voice/answer_audio.wav",
   "meta": {
     "id": "A123",
     "confidence": 0.95,
@@ -92,14 +151,20 @@ The backend normalizes responses to:
 ```
 hebrew-chat-widget/
 ├── package.json          # Dependencies and scripts
-├── server.js             # Express backend with proxy
+├── server.js             # Express backend with mock database integration
+├── mock_db.js           # Local Hebrew Q&A database with voice URL support
 ├── .env.example          # Environment configuration template
 ├── .env                  # Your environment variables (create from .env.example)
-├── README.md             # This file
+├── README.md             # This file (updated with current status)
 └── public/               # Frontend assets
-    ├── index.html        # Main HTML with RTL Hebrew layout
-    ├── styles.css        # Responsive CSS with gradient design
-    ├── app.js            # Chat functionality and API integration
+    ├── index.html        # Main HTML with RTL Hebrew layout (v15)
+    ├── styles.css        # Responsive CSS with enhanced speaker buttons
+    ├── app.js            # Chat functionality with voice system (v15)
+    ├── voice/            # Voice audio files directory
+    │   ├── hi_greeting.wav           # Hebrew greeting responses
+    │   ├── fiber_internet.wav        # Bezeq product explanations
+    │   ├── gaming_response.wav       # Technical feature responses
+    │   └── lead_confirmation.wav     # Lead generation confirmations
     └── assets/           # Static assets (logo, icons, etc.)
         └── logo.svg      # Placeholder logo
 ```
