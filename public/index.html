@@ -48,6 +48,9 @@
                     <div class="message assistant-message">
                         <div class="message-bubble">
                             הרבה יתרונות בינהם : מהירות גלישה, תשתית חזקה ובלי תקלות, רוצה עוד פרטים?
+                            <button class="speaker-button" aria-label="השמע הודעה" title="לחצו להשמעת ההודעה" onclick="window.hebrewChat?.playVoiceResponse(null, 'הרבה יתרונות בינהם : מהירות גלישה, תשתית חזקה ובלי תקלות, רוצה עוד פרטים?')" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; border: 2px solid white !important; color: white !important;">
+                                🔊
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -77,6 +80,20 @@
                         dir="rtl"
                     />
                     <button 
+                        type="button" 
+                        class="voice-input-button" 
+                        id="voiceInputButton"
+                        aria-label="הקלטה קולית"
+                        title="לחצו להקלטת שאלה קולית"
+                    >
+                        <svg class="microphone-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="2"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                    <button 
                         type="submit" 
                         class="send-button" 
                         id="sendButton"
@@ -97,6 +114,6 @@
         </div>
     </main>
 
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=15"></script>
 </body>
 </html>
