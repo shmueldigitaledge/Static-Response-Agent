@@ -3,10 +3,39 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const axios = require('axios');
 const path = require('path');
+const WebSocket = require('ws');
+const http = require('http');
+const multer = require('multer');
+const { createDeepgram } = require('@deepgram/sdk');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
+
+// Initialize Deepgram (if API key provided)
+let deepgram = null;
+if (process.env.DEEPGRAM_API_KEY) {
+    deepgram = createDeepgram(process.env.DEEPGRAM_API_KEY);
+    console.log('✅ Deepgram STT initialized');
+} else {
+    console.log('⚠️  Deepgram API key not provided - using mock STT');
+}
+
+// File upload configuration
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('audio/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only audio files are allowed'), false);
+        }
+    },
+});
 
 // Check if DB_API_BASE is configured
 const USE_FAKE_API = !process.env.DB_API_BASE || process.env.DB_API_BASE === 'fake';
@@ -81,7 +110,8 @@ function generateFakeResponse(query) {
     answerId: `FAKE_${Date.now()}`,
     answerText: `${randomResponse} השאלה שלך על "${query}" מעניינת מאוד. זה קשור ל${randomTopic} ויש הרבה מה לומר על זה!`,
     confidence: Math.random() * 0.4 + 0.6, // 0.6-1.0
-    tags: [randomTopic, "בדיקה", "demo"]
+    tags: [randomTopic, "בדיקה", "demo"],
+    audioUrl: `/audio/fake_${Math.floor(Math.random() * 5) + 1}.mp3` // Fake audio URLs
   };
 }
 
@@ -133,6 +163,7 @@ app.post('/api/ask', limiter, async (req, res) => {
     // Normalize response format
     const normalizedResponse = {
       answer: data.answerText || data.answer || 'מצטער, לא מצאתי תשובה מתאימה.',
+      audioUrl: data.audioUrl || null,
       meta: {
         id: data.answerId || data.id || null,
         confidence: data.confidence || null,
@@ -166,6 +197,59 @@ app.post('/api/ask', limiter, async (req, res) => {
   }
 });
 
+// Audio upload endpoint for fallback STT
+app.post('/upload', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No audio file provided' });
+    }
+
+    const lang = req.query.lang || 'he';
+    let transcript = '';
+
+    if (deepgram) {
+      // Use Deepgram for real STT
+      try {
+        const response = await deepgram.listen.prerecorded.transcribeFile(
+          req.file.buffer,
+          {
+            model: 'nova-2',
+            language: lang,
+            smart_format: true,
+            punctuate: true,
+          }
+        );
+
+        transcript = response.results.channels[0].alternatives[0].transcript || '';
+      } catch (error) {
+        console.error('Deepgram transcription error:', error);
+        throw error;
+      }
+    } else {
+      // Mock STT response
+      transcript = `תמלול מדומה של קובץ השמע (${req.file.size} bytes)`;
+    }
+
+    res.json({ 
+      transcript,
+      language: lang,
+      confidence: 0.95
+    });
+
+  } catch (error) {
+    console.error('Upload transcription error:', error);
+    res.status(500).json({ 
+      error: 'שגיאה בתמלול הקובץ. אנא נסו שוב.' 
+    });
+  }
+});
+
+// Serve fake audio files (for demo purposes)
+app.get('/audio/fake_:id.mp3', (req, res) => {
+  // Return 404 for now - in real implementation, serve actual audio files
+  res.status(404).json({ error: 'Audio file not found' });
+});
+
 // Serve the main chat widget
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -182,9 +266,202 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// WebSocket Server for Live Conversation
+const wss = new WebSocket.Server({ 
+  server,
+  path: '/realtime'
+});
+
+// Active connections map
+const activeConnections = new Map();
+
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const lang = url.searchParams.get('lang') || 'he';
+  const sessionId = url.searchParams.get('session') || 'anonymous';
+  
+  console.log(`🔗 WebSocket connected: ${sessionId}, lang: ${lang}`);
+  
+  // Store connection info
+  const connectionInfo = {
+    ws,
+    sessionId,
+    lang,
+    isTranscribing: false,
+    deepgramConnection: null
+  };
+  
+  activeConnections.set(ws, connectionInfo);
+
+  // Initialize Deepgram live transcription if available
+  if (deepgram) {
+    try {
+      const deepgramLive = deepgram.listen.live({
+        model: 'nova-2',
+        language: lang,
+        smart_format: true,
+        punctuate: true,
+        interim_results: true,
+        utterance_end_ms: 2000,
+      });
+
+      connectionInfo.deepgramConnection = deepgramLive;
+
+      // Handle Deepgram transcription results
+      deepgramLive.addListener('Results', (data) => {
+        const result = data.channel.alternatives[0];
+        if (result && result.transcript) {
+          const message = {
+            type: result.is_final ? 'transcript_final' : 'transcript_partial',
+            text: result.transcript,
+            confidence: result.confidence || 0.9,
+            language: lang
+          };
+          
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(message));
+          }
+
+          // If final transcript, get response from DB
+          if (result.is_final && result.transcript.trim()) {
+            handleFinalTranscript(ws, result.transcript, sessionId);
+          }
+        }
+      });
+
+      deepgramLive.addListener('Error', (error) => {
+        console.error('Deepgram error:', error);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'שגיאה בשירות זיהוי הקול'
+          }));
+        }
+      });
+
+      deepgramLive.addListener('Close', () => {
+        console.log('🔌 Deepgram connection closed');
+      });
+
+    } catch (error) {
+      console.error('Failed to initialize Deepgram live:', error);
+    }
+  }
+
+  // Handle incoming audio data
+  ws.on('message', (data) => {
+    if (Buffer.isBuffer(data)) {
+      // Audio data received
+      if (connectionInfo.deepgramConnection && connectionInfo.deepgramConnection.getReadyState() === 1) {
+        connectionInfo.deepgramConnection.send(data);
+        connectionInfo.isTranscribing = true;
+      } else {
+        // Fallback: mock transcription
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'transcript_partial',
+              text: 'תמלול מדומה...',
+              confidence: 0.8,
+              language: lang
+            }));
+            
+            setTimeout(() => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  type: 'transcript_final',
+                  text: 'שאלה מדומה מקובץ השמע',
+                  confidence: 0.85,
+                  language: lang
+                }));
+                handleFinalTranscript(ws, 'שאלה מדומה מקובץ השמע', sessionId);
+              }
+            }, 1500);
+          }
+        }, 500);
+      }
+    }
+  });
+
+  // Handle connection close
+  ws.on('close', () => {
+    console.log(`🔌 WebSocket disconnected: ${sessionId}`);
+    
+    // Close Deepgram connection
+    if (connectionInfo.deepgramConnection) {
+      connectionInfo.deepgramConnection.finish();
+    }
+    
+    // Remove from active connections
+    activeConnections.delete(ws);
+  });
+
+  // Send welcome message
+  ws.send(JSON.stringify({
+    type: 'connected',
+    message: 'מחובר לשיחה קולית',
+    language: lang,
+    sessionId
+  }));
+});
+
+// Handle final transcript and get response from DB
+async function handleFinalTranscript(ws, transcript, sessionId) {
+  try {
+    console.log(`📝 Final transcript: "${transcript}" (session: ${sessionId})`);
+    
+    // Get response from fake API
+    let data;
+    if (USE_FAKE_API) {
+      // Simulate API delay
+      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
+      data = generateFakeResponse(transcript);
+    } else {
+      // Call real external DB API
+      const apiUrl = `${process.env.DB_API_BASE}/answers/search`;
+      const response = await axios.post(apiUrl, 
+        { q: transcript },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.DB_API_KEY && { 'Authorization': `Bearer ${process.env.DB_API_KEY}` })
+          },
+          timeout: 10000
+        }
+      );
+      data = response.data;
+    }
+
+    // Send response back to client
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'response',
+        text: data.answerText || data.answer || 'מצטער, לא מצאתי תשובה מתאימה.',
+        audioUrl: data.audioUrl || null,
+        meta: {
+          id: data.answerId || data.id || null,
+          confidence: data.confidence || null,
+          tags: data.tags || []
+        }
+      }));
+    }
+
+  } catch (error) {
+    console.error('Error handling final transcript:', error);
+    
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'שגיאה בקבלת תשובה מהמערכת'
+      }));
+    }
+  }
+}
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Hebrew Chat Widget server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`DB API Base: ${process.env.DB_API_BASE}`);
+  console.log(`WebSocket server ready for live conversations`);
 });

@@ -10,10 +10,21 @@ class HebrewChatWidget {
         this.messages = [];
         this.isProcessing = false;
         this.isListening = false;
+        this.isInCall = false;
+        this.callState = 'idle'; // idle, connecting, live, ended
         
-        // Speech Recognition
+        // Speech Recognition for live calls
         this.recognition = null;
         this.initSpeechRecognition();
+        
+        // WebSocket for live conversation
+        this.ws = null;
+        this.mediaRecorder = null;
+        this.audioContext = null;
+        
+        // Audio playback
+        this.audioPlayer = new Audio();
+        this.audioPlayer.preload = 'auto';
         
         // DOM elements
         this.elements = {
@@ -99,9 +110,13 @@ class HebrewChatWidget {
      * Bind event listeners
      */
     bindEvents() {
-        // Start chat button - now starts voice recording
+        // Start chat button - now starts live voice call
         this.elements.startChatBtn.addEventListener('click', () => {
-            this.startVoiceRecording();
+            if (this.isInCall) {
+                this.endLiveCall();
+            } else {
+                this.startLiveCall();
+            }
         });
         
         // Chat form submission
@@ -274,6 +289,365 @@ class HebrewChatWidget {
     }
     
     /**
+     * Start live voice call
+     */
+    async startLiveCall() {
+        if (this.isInCall || this.isProcessing) {
+            return;
+        }
+        
+        try {
+            console.log('🔵 Starting live voice call...');
+            this.setCallState('connecting');
+            
+            // Request microphone permissions
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { 
+                    sampleRate: 16000,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true
+                } 
+            });
+            
+            // Initialize WebSocket connection
+            await this.initWebSocket();
+            
+            // Start continuous speech recognition
+            this.startContinuousRecognition();
+            
+            // Setup media recorder for audio streaming
+            this.setupMediaRecorder(stream);
+            
+            this.setCallState('live');
+            this.addSystemMessage('שיחה החלה - דברו בחופשיות');
+            
+        } catch (error) {
+            console.error('Error starting live call:', error);
+            this.setCallState('idle');
+            
+            if (error.name === 'NotAllowedError') {
+                this.showError('נדרשת הרשאה למיקרופון לביצוע שיחה קולית');
+            } else if (error.name === 'NotFoundError') {
+                this.showError('לא נמצא מיקרופון. אנא בדקו את ההתקן');
+            } else {
+                this.showError('שגיאה בהתחלת השיחה. אנא נסו שוב');
+            }
+        }
+    }
+    
+    /**
+     * End live voice call
+     */
+    endLiveCall() {
+        console.log('🔴 Ending live voice call...');
+        
+        this.setCallState('ended');
+        
+        // Stop speech recognition
+        if (this.recognition && this.isListening) {
+            this.recognition.stop();
+        }
+        
+        // Stop media recorder
+        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+            this.mediaRecorder.stop();
+        }
+        
+        // Close WebSocket
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.close();
+        }
+        
+        // Stop audio playback
+        if (!this.audioPlayer.paused) {
+            this.audioPlayer.pause();
+        }
+        
+        this.setCallState('idle');
+        this.addSystemMessage('השיחה הסתיימה');
+    }
+    
+    /**
+     * Initialize WebSocket connection for live conversation
+     */
+    async initWebSocket() {
+        return new Promise((resolve, reject) => {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/realtime?lang=he&session=${this.sessionId}`;
+            
+            this.ws = new WebSocket(wsUrl);
+            
+            this.ws.onopen = () => {
+                console.log('🔗 WebSocket connected for live call');
+                resolve();
+            };
+            
+            this.ws.onmessage = (event) => {
+                this.handleWebSocketMessage(JSON.parse(event.data));
+            };
+            
+            this.ws.onclose = () => {
+                console.log('🔌 WebSocket disconnected');
+                if (this.isInCall) {
+                    this.showError('חיבור הרשת נותק. אנא התחלו שיחה חדשה');
+                    this.endLiveCall();
+                }
+            };
+            
+            this.ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                reject(new Error('שגיאה בחיבור לשירות השיחה'));
+            };
+            
+            // Timeout after 5 seconds
+            setTimeout(() => {
+                if (this.ws.readyState !== WebSocket.OPEN) {
+                    reject(new Error('חיבור לשירות השיחה נכשל'));
+                }
+            }, 5000);
+        });
+    }
+    
+    /**
+     * Handle WebSocket messages
+     */
+    handleWebSocketMessage(data) {
+        switch (data.type) {
+            case 'transcript_partial':
+                this.updateLiveTranscript(data.text, false);
+                break;
+                
+            case 'transcript_final':
+                this.updateLiveTranscript(data.text, true);
+                break;
+                
+            case 'response':
+                this.handleLiveResponse(data);
+                break;
+                
+            case 'error':
+                console.error('WebSocket error:', data.message);
+                this.showError(data.message || 'שגיאה בשירות השיחה');
+                break;
+        }
+    }
+    
+    /**
+     * Setup media recorder for audio streaming
+     */
+    setupMediaRecorder(stream) {
+        const options = {
+            mimeType: 'audio/webm;codecs=opus',
+            audioBitsPerSecond: 16000
+        };
+        
+        this.mediaRecorder = new MediaRecorder(stream, options);
+        
+        this.mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
+                // Send audio data to server
+                this.ws.send(event.data);
+            }
+        };
+        
+        // Send audio chunks every 250ms for real-time processing
+        this.mediaRecorder.start(250);
+    }
+    
+    /**
+     * Start continuous speech recognition for live transcription
+     */
+    startContinuousRecognition() {
+        if (!this.recognition) return;
+        
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        
+        this.recognition.onresult = (event) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                if (result.isFinal) {
+                    finalTranscript += result[0].transcript;
+                } else {
+                    interimTranscript += result[0].transcript;
+                }
+            }
+            
+            if (interimTranscript) {
+                this.updateLiveTranscript(interimTranscript, false);
+            }
+            
+            if (finalTranscript) {
+                this.updateLiveTranscript(finalTranscript, true);
+            }
+        };
+        
+        this.recognition.start();
+    }
+    
+    /**
+     * Update live transcript display
+     */
+    updateLiveTranscript(text, isFinal) {
+        if (!text.trim()) return;
+        
+        // Find or create live transcript element
+        let liveElement = document.getElementById('liveTranscript');
+        
+        if (!liveElement && !isFinal) {
+            // Create live transcript element
+            liveElement = document.createElement('div');
+            liveElement.id = 'liveTranscript';
+            liveElement.className = 'message user-message live-transcript';
+            liveElement.innerHTML = `
+                <div class="message-bubble live-bubble">
+                    <span class="live-text">${text}</span>
+                    <span class="live-indicator">🎤</span>
+                </div>
+            `;
+            this.elements.chatMessages.appendChild(liveElement);
+            this.scrollToBottom();
+        } else if (liveElement && !isFinal) {
+            // Update live transcript
+            const liveText = liveElement.querySelector('.live-text');
+            if (liveText) {
+                liveText.textContent = text;
+            }
+        } else if (isFinal) {
+            // Convert to final message
+            if (liveElement) {
+                liveElement.remove();
+            }
+            this.addMessage('user', text);
+        }
+    }
+    
+    /**
+     * Handle live response from server
+     */
+    async handleLiveResponse(data) {
+        try {
+            // Add assistant text message
+            this.addMessage('assistant', data.text);
+            
+            // Play pre-recorded audio if available
+            if (data.audioUrl) {
+                await this.playResponseAudio(data.audioUrl);
+            }
+            
+        } catch (error) {
+            console.error('Error handling live response:', error);
+            this.showError('שגיאה בהשמעת התשובה');
+        }
+    }
+    
+    /**
+     * Play pre-recorded response audio
+     */
+    async playResponseAudio(audioUrl) {
+        try {
+            this.audioPlayer.src = audioUrl;
+            
+            // Show audio playing indicator
+            this.addSystemMessage('🔊 משמיע תשובה...');
+            
+            await new Promise((resolve, reject) => {
+                this.audioPlayer.onloadeddata = resolve;
+                this.audioPlayer.onerror = reject;
+                this.audioPlayer.load();
+            });
+            
+            await this.audioPlayer.play();
+            
+            this.audioPlayer.onended = () => {
+                console.log('🔇 Audio playback finished');
+                // Remove audio indicator
+                this.removeLastSystemMessage();
+            };
+            
+        } catch (error) {
+            console.error('Error playing audio:', error);
+            this.showError('שגיאה בהשמעת התשובה הקולית');
+        }
+    }
+    
+    /**
+     * Set call state and update UI
+     */
+    setCallState(state) {
+        this.callState = state;
+        this.isInCall = (state === 'connecting' || state === 'live');
+        this.updateCallUI();
+    }
+    
+    /**
+     * Update UI based on call state
+     */
+    updateCallUI() {
+        const button = this.elements.startChatBtn;
+        const icon = button.querySelector('.chat-icon');
+        const hint = this.elements.circleHint;
+        
+        button.classList.remove('listening', 'connecting', 'in-call');
+        
+        switch (this.callState) {
+            case 'connecting':
+                button.classList.add('connecting');
+                button.setAttribute('aria-label', 'מתחבר לשיחה...');
+                if (hint) hint.textContent = 'מתחבר...';
+                if (icon) icon.innerHTML = `<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="25.13" stroke-dashoffset="25.13" class="connecting-spinner"/>`;
+                break;
+                
+            case 'live':
+                button.classList.add('in-call');
+                button.setAttribute('aria-label', 'שיחה פעילה - לחצו לסיום');
+                if (hint) hint.textContent = 'שיחה פעילה - לחצו לסיום';
+                if (icon) icon.innerHTML = `<path d="M6 2L3 6v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6l-3-4H6zm0 2h12l2 2v12H4V6l2-2z" fill="currentColor"/><path d="M8 10h8v2H8v-2zm0 4h8v2H8v-2z" fill="currentColor"/>`;
+                break;
+                
+            case 'ended':
+                if (hint) hint.textContent = 'השיחה הסתיימה';
+                setTimeout(() => this.setCallState('idle'), 2000);
+                break;
+                
+            default: // idle
+                button.setAttribute('aria-label', 'התחל שיחה קולית');
+                if (hint) hint.textContent = 'לחצו כדי לדבר איתי';
+                if (icon) icon.innerHTML = `
+                    <path d="M8.5 19H8C4.13401 19 1 15.866 1 12C1 8.13401 4.13401 5 8 5H16C19.866 5 23 8.13401 23 12C23 15.866 19.866 19 16 19H15.5M8.5 19L12 22.5L15.5 19M8.5 19H15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="9" cy="12" r="1" fill="currentColor"/>
+                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
+                    <circle cx="15" cy="12" r="1" fill="currentColor"/>
+                `;
+        }
+    }
+    
+    /**
+     * Add system message to chat
+     */
+    addSystemMessage(text) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'message system-message';
+        messageEl.innerHTML = `<div class="system-bubble">${text}</div>`;
+        this.elements.chatMessages.appendChild(messageEl);
+        this.scrollToBottom();
+    }
+    
+    /**
+     * Remove last system message
+     */
+    removeLastSystemMessage() {
+        const systemMessages = this.elements.chatMessages.querySelectorAll('.system-message');
+        if (systemMessages.length > 0) {
+            systemMessages[systemMessages.length - 1].remove();
+        }
+    }
+    
+    /**
      * Send message (unified method for text and voice input)
      */
     async sendMessage(text) {
@@ -297,6 +671,11 @@ class HebrewChatWidget {
             // Hide loading and add assistant response
             this.hideLoading();
             this.addMessage('assistant', response.answer);
+            
+            // If we have audio URL, play it
+            if (response.audioUrl) {
+                await this.playResponseAudio(response.audioUrl);
+            }
             
         } catch (error) {
             console.error('Chat error:', error);
