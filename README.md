@@ -1,64 +1,56 @@
-# Hebrew Chat Widget
+# Hebrew Voice Chat Widget - Local POC
 
-A production-ready, iframe-embeddable chat widget with RTL Hebrew support. Built with Node.js + Express (backend proxy) and vanilla HTML/CSS/JS (frontend).
+A production-ready Hebrew chat widget with voice-to-text capabilities, running completely locally with no external dependencies.
 
 ## Features
 
-- 🇮🇱 Full RTL Hebrew support with proper text direction
-- 📱 Responsive design optimized for mobile and desktop
-- 🎨 Beautiful gradient background with glassmorphism effects
-- 🔒 Rate limiting (3 req/sec per IP) and CORS protection
-- 💾 Session storage for chat history (last 10 messages)
-- ⚡ Lightweight vanilla JavaScript (no frameworks)
-- 🖼️ Iframe-embeddable for easy integration
-- ♿ Accessibility features (ARIA labels, keyboard navigation)
-- 🎯 Clean, modern UI matching the provided mockup design
+- 🎤 **Voice Input:** Browser-based speech recognition (Hebrew)
+- 🗣️ **Voice Chat Loop:** Click button → speak → get text response → repeat
+- 🇮🇱 **Full RTL Hebrew support** with proper text direction
+- 💾 **Local Mock Database:** 50+ Hebrew Q&A pairs, no external API calls
+- 🎯 **Smart Keyword Matching:** Finds relevant answers with confidence scoring
+- 📱 **Responsive design** optimized for mobile and desktop
+- 🎨 **Beautiful gradient UI** with call status indicators
+- ⚡ **Lightweight:** Vanilla JavaScript, no frameworks
+- ♿ **Accessibility features** (ARIA labels, keyboard navigation)
 
-## Quick Start
+## Quick Start (Local Development)
 
-### 1. Installation
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-```bash
-# Clone or download the project
-cd hebrew-chat-widget
+2. **Run the application:**
+   ```bash
+   npm run dev
+   ```
 
-# Copy environment configuration
-cp .env.example .env
+3. **Open in browser:**
+   - Navigate to `http://localhost:3000`
+   - Click the blue circle button to start voice conversation
+   - Speak in Hebrew - your speech will be converted to text and answered automatically
+   - Click the orange phone button to end the conversation
 
-# Install dependencies
-npm install
+## Local Mock Database
+
+The application uses a completely local Q&A system (`mock_db.js`) with no external API calls. It includes:
+
+- **50+ Hebrew Q&A pairs** covering greetings, technology, food, travel, health, and sports
+- **Smart keyword matching** that finds relevant answers based on user questions  
+- **Easy customization** - edit the `QA_DATABASE` object in `mock_db.js`
+- **Confidence scoring** and tagging system for answer quality
+- **Fallback responses** for unmatched queries
+
+**To add new Q&A entries:**
+```javascript
+// In mock_db.js, add to QA_DATABASE:
+'your keyword': {
+  answer: 'Your Hebrew answer here',
+  confidence: 0.9,
+  tags: ['category', 'tag']
+}
 ```
-
-### 2. Configuration
-
-Edit `.env` file with your settings:
-
-```env
-# External Database API Base URL (Required)
-DB_API_BASE=http://localhost:4000
-
-# Optional API Key for external DB service
-DB_API_KEY=your_api_key_here
-
-# Optional: Specify allowed origin for CORS in production
-ORIGIN_URL=https://yourdomain.com
-
-# Server Configuration
-PORT=3000
-NODE_ENV=development
-```
-
-### 3. Development
-
-```bash
-# Start development server with auto-reload
-npm run dev
-
-# Or start production server
-npm start
-```
-
-Open http://localhost:3000 to view the chat widget.
 
 ## API Integration
 

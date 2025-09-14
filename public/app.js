@@ -1,5 +1,5 @@
 /**
- * Hebrew Chat Widget - Frontend Application
+ * Hebrew Chat Widget - Frontend Application (Text-Only)
  * Handles chat functionality, API communication, and UI interactions
  */
 
@@ -10,28 +10,11 @@ class HebrewChatWidget {
         this.messages = [];
         this.isProcessing = false;
         this.isListening = false;
-        this.isInCall = false;
-        this.callState = 'idle'; // idle, connecting, live, ended
+        this.isInConversation = false; // Track if we're in active conversation mode
         
-        // Speech Recognition for live calls
+        // Speech Recognition
         this.recognition = null;
         this.initSpeechRecognition();
-        
-        // WebSocket for live conversation
-        this.ws = null;
-        this.mediaRecorder = null;
-        this.audioContext = null;
-        
-        // Audio playback
-        this.audioPlayer = new Audio();
-        this.audioPlayer.preload = 'auto';
-        
-        // Speech processing
-        this.silenceTimer = null;
-        this.lastSpeechTime = 0;
-        this.currentTranscript = '';
-        this.lastProcessedTranscript = '';
-        this.isCurrentlySpeaking = false;
         
         // DOM elements
         this.elements = {
@@ -45,28 +28,16 @@ class HebrewChatWidget {
             errorToast: document.getElementById('errorToast'),
             errorMessage: document.getElementById('errorMessage'),
             errorClose: document.getElementById('errorClose'),
-            circleHint: document.getElementById('circleHint'),
-            voiceControls: document.getElementById('voiceControls'),
-            pushToTalkBtn: document.getElementById('pushToTalkBtn')
+            circleHint: document.getElementById('circleHint')
         };
         
         this.init();
     }
     
     /**
-     * Initialize the chat widget
-     */
-    init() {
-        this.bindEvents();
-        this.loadMessagesFromStorage();
-        this.updateUI();
-    }
-    
-    /**
      * Initialize Speech Recognition
      */
     initSpeechRecognition() {
-        // Check for Speech Recognition support
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         
         if (!SpeechRecognition) {
@@ -77,18 +48,17 @@ class HebrewChatWidget {
         this.recognition = new SpeechRecognition();
         this.recognition.continuous = false;
         this.recognition.interimResults = false;
-        this.recognition.lang = 'he-IL'; // Hebrew language
+        this.recognition.lang = 'he-IL';
         this.recognition.maxAlternatives = 1;
         
-        // Event handlers
         this.recognition.onstart = () => {
-            console.log('🎤 Voice recognition started');
+            console.log('🎤 Voice recording started');
             this.setListeningState(true);
         };
         
         this.recognition.onresult = (event) => {
             const transcript = event.results[0][0].transcript;
-            console.log('🗣️ Voice input:', transcript);
+            console.log('🗣️ Voice transcript:', transcript);
             this.handleVoiceInput(transcript);
         };
         
@@ -96,36 +66,84 @@ class HebrewChatWidget {
             console.error('Speech recognition error:', event.error);
             this.setListeningState(false);
             
-            let errorMessage = 'שגיאה בזיהוי קול. אנא נסו שוב.';
+            // Don't show error for 'aborted' - this happens when user manually stops
+            if (event.error === 'aborted') {
+                console.log('Speech recognition was manually stopped');
+                return;
+            }
             
+            let errorMessage = 'שגיאה בזיהוי קול. אנא נסו שוב.';
             if (event.error === 'not-allowed') {
                 errorMessage = 'נדרשת הרשאה למיקרופון. אנא אפשרו גישה למיקרופון ונסו שוב.';
             } else if (event.error === 'no-speech') {
                 errorMessage = 'לא זוהה קול. אנא נסו שוב.';
-            } else if (event.error === 'network') {
-                errorMessage = 'שגיאת רשת. בדקו את החיבור לאינטרנט.';
             }
             
             this.showError(errorMessage);
         };
         
         this.recognition.onend = () => {
-            console.log('🔇 Voice recognition ended');
+            console.log('🔇 Voice recording ended');
             this.setListeningState(false);
         };
+    }
+
+    /**
+     * Initialize the chat widget
+     */
+    init() {
+        console.log('Hebrew Chat Widget initializing...');
+        console.log('Elements found:', {
+            startChatBtn: !!this.elements.startChatBtn,
+            chatContainer: !!this.elements.chatContainer,
+            messageInput: !!this.elements.messageInput
+        });
+        this.bindEvents();
+        this.loadMessagesFromStorage();
+        this.updateUI();
+        this.initializeVoices();
+        console.log('Hebrew Chat Widget initialized successfully');
+    }
+    
+    /**
+     * Initialize and load available voices for Hebrew TTS
+     */
+    initializeVoices() {
+        if (!window.speechSynthesis) return;
+        
+        // Load voices and wait for them to be available
+        const loadVoices = () => {
+            const voices = window.speechSynthesis.getVoices();
+            console.log('🎤 Available voices:', voices.length);
+            
+            const hebrewVoices = voices.filter(voice => 
+                voice.lang.startsWith('he') || 
+                voice.lang.includes('IL') || 
+                voice.name.toLowerCase().includes('hebrew')
+            );
+            
+            console.log('🇮🇱 Hebrew voices found:', hebrewVoices.map(v => `${v.name} (${v.lang})`));
+            
+            if (hebrewVoices.length === 0) {
+                console.warn('⚠️ No Hebrew voices available - will use default voice with Hebrew language setting');
+            }
+        };
+        
+        // Load voices immediately if available
+        loadVoices();
+        
+        // Also listen for voice loading event (some browsers need this)
+        window.speechSynthesis.addEventListener('voiceschanged', loadVoices, { once: true });
     }
     
     /**
      * Bind event listeners
      */
     bindEvents() {
-        // Start chat button - now starts live voice call
+        // Start chat button - toggle voice recording
         this.elements.startChatBtn.addEventListener('click', () => {
-            if (this.isInCall) {
-                this.endLiveCall();
-            } else {
-                this.startLiveCall();
-            }
+            console.log('Circle button clicked - toggling voice recording');
+            this.toggleVoiceRecording();
         });
         
         // Chat form submission
@@ -155,32 +173,6 @@ class HebrewChatWidget {
             this.hideError();
         });
         
-        // Push-to-talk button events
-        if (this.elements.pushToTalkBtn) {
-            this.elements.pushToTalkBtn.addEventListener('mousedown', () => {
-                this.startPushToTalk();
-            });
-            
-            this.elements.pushToTalkBtn.addEventListener('mouseup', () => {
-                this.stopPushToTalk();
-            });
-            
-            this.elements.pushToTalkBtn.addEventListener('mouseleave', () => {
-                this.stopPushToTalk();
-            });
-            
-            // Touch events for mobile
-            this.elements.pushToTalkBtn.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                this.startPushToTalk();
-            });
-            
-            this.elements.pushToTalkBtn.addEventListener('touchend', (e) => {
-                e.preventDefault();
-                this.stopPushToTalk();
-            });
-        }
-        
         // Auto-hide error toast after 5 seconds
         let errorTimeout;
         const observer = new MutationObserver((mutations) => {
@@ -207,14 +199,45 @@ class HebrewChatWidget {
     }
     
     /**
-     * Focus the input field and scroll to chat
+     * Toggle voice recording on/off
      */
-    focusInput() {
-        this.elements.messageInput.focus();
-        this.elements.chatContainer.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' 
-        });
+    toggleVoiceRecording() {
+        if (this.isInConversation) {
+            // In call status - click to exit
+            this.endConversationMode();
+        } else {
+            // Normal status - click to start call
+            this.startConversationMode();
+        }
+    }
+    
+    /**
+     * Start conversation mode (persistent call status)
+     */
+    startConversationMode() {
+        console.log('🎯 Starting conversation mode');
+        this.isInConversation = true;
+        this.startVoiceRecording();
+    }
+    
+    /**
+     * End conversation mode (return to normal)
+     */
+    endConversationMode() {
+        console.log('🔚 Ending conversation mode');
+        this.isInConversation = false;
+        
+        // Properly stop voice recording without errors
+        if (this.recognition && this.isListening) {
+            try {
+                this.recognition.abort(); // Use abort() instead of stop() for immediate termination
+            } catch (error) {
+                console.log('Recognition already stopped');
+            }
+        }
+        
+        this.setListeningState(false);
+        this.updateButtonUI();
     }
     
     /**
@@ -223,12 +246,6 @@ class HebrewChatWidget {
     startVoiceRecording() {
         if (!this.recognition) {
             this.showError('זיהוי קול אינו נתמך בדפדפן זה. אנא השתמשו בכתיבה.');
-            this.focusInput();
-            return;
-        }
-        
-        if (this.isListening) {
-            this.stopVoiceRecording();
             return;
         }
         
@@ -238,9 +255,10 @@ class HebrewChatWidget {
         }
         
         try {
+            console.log('🎤 Starting voice recording...');
             this.recognition.start();
         } catch (error) {
-            console.error('Error starting voice recognition:', error);
+            console.error('Error starting voice recording:', error);
             this.showError('שגיאה בהתחלת זיהוי קול. אנא נסו שוב.');
         }
     }
@@ -250,68 +268,82 @@ class HebrewChatWidget {
      */
     stopVoiceRecording() {
         if (this.recognition && this.isListening) {
+            console.log('🔴 Stopping voice recording...');
             this.recognition.stop();
         }
     }
     
     /**
-     * Handle voice input
+     * Handle voice input result
      */
     async handleVoiceInput(transcript) {
         if (!transcript || transcript.trim().length === 0) {
             this.showError('לא זוהה טקסט. אנא נסו שוב.');
+            // Stay in conversation mode, ready for next attempt
+            if (this.isInConversation) {
+                setTimeout(() => this.startVoiceRecording(), 1000);
+            }
             return;
         }
         
         console.log('📝 Processing voice transcript:', transcript);
         
-        // Add user message and send to API
+        // Add the transcribed text as user message and send to API
         await this.sendMessage(transcript.trim());
+        
+        // After processing response, automatically start listening for next question
+        if (this.isInConversation && !this.isProcessing) {
+            console.log('🔄 Ready for next question - starting voice recording');
+            setTimeout(() => {
+                if (this.isInConversation && !this.isListening) {
+                    this.startVoiceRecording();
+                }
+            }, 1500); // Brief pause after response
+        }
     }
     
     /**
-     * Set listening state and update UI
+     * Set listening state and update button UI
      */
     setListeningState(listening) {
         this.isListening = listening;
-        this.updateVoiceButtonUI();
+        this.updateButtonUI();
     }
     
     /**
-     * Update voice button UI based on state
+     * Update button appearance based on state
      */
-    updateVoiceButtonUI() {
+    updateButtonUI() {
         const button = this.elements.startChatBtn;
         const icon = button.querySelector('.chat-icon');
         const hint = this.elements.circleHint;
         
-        if (this.isListening) {
-            button.classList.add('listening');
-            button.setAttribute('aria-label', 'הקלטה פעילה - לחצו לעצירה');
+        if (this.isInConversation) {
+            // Show call status (red/orange - in conversation mode)
+            button.classList.add('in-conversation');
+            button.classList.remove('listening');
+            button.setAttribute('aria-label', 'במצב שיחה - לחצו לסיום');
             
-            // Update hint text
             if (hint) {
-                hint.textContent = 'מקשיב... דברו עכשיו';
+                hint.textContent = 'במצב שיחה - לחצו לסיום';
             }
             
-            // Change to microphone icon while listening
+            // Show phone icon for call status
             if (icon) {
                 icon.innerHTML = `
-                    <circle cx="12" cy="12" r="3" fill="currentColor"/>
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <path d="M3 5a2 2 0 0 1 2-2h3.28a1 1 0 0 1 .948.684l1.498 4.493a1 1 0 0 1-.502 1.21l-2.257 1.13a11.042 11.042 0 0 0 5.516 5.516l1.13-2.257a1 1 0 0 1 1.21-.502l4.493 1.498a1 1 0 0 1 .684.949V19a2 2 0 0 1-2 2h-1C9.716 21 3 14.284 3 6V5z" fill="currentColor"/>
                 `;
             }
         } else {
-            button.classList.remove('listening');
-            button.setAttribute('aria-label', 'התחל צ׳אט קולי');
+            // Show normal status (blue)
+            button.classList.remove('listening', 'in-conversation');
+            button.setAttribute('aria-label', 'התחל שיחה קולית');
             
-            // Update hint text
             if (hint) {
                 hint.textContent = 'לחצו כדי לדבר איתי';
             }
             
-            // Change back to chat icon
+            // Show chat icon for normal status
             if (icon) {
                 icon.innerHTML = `
                     <path d="M8.5 19H8C4.13401 19 1 15.866 1 12C1 8.13401 4.13401 5 8 5H16C19.866 5 23 8.13401 23 12C23 15.866 19.866 19 16 19H15.5M8.5 19L12 22.5L15.5 19M8.5 19H15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -324,548 +356,33 @@ class HebrewChatWidget {
     }
     
     /**
-     * Start live voice call
+     * Handle sending a message from text input
      */
-    async startLiveCall() {
-        if (this.isInCall || this.isProcessing) {
+    async handleSendMessage() {
+        const text = this.elements.messageInput.value.trim();
+        
+        if (!text) {
             return;
         }
         
-        try {
-            console.log('🔵 Starting live voice call...');
-            this.setCallState('connecting');
-            
-            // Request microphone permissions with enhanced audio processing
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { 
-                    sampleRate: 16000,
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    googEchoCancellation: true,
-                    googAutoGainControl: true,
-                    googNoiseSuppression: true,
-                    googHighpassFilter: true,
-                    googTypingNoiseDetection: true
-                } 
-            });
-            
-            // Initialize WebSocket connection
-            await this.initWebSocket();
-            
-            // Start continuous speech recognition
-            this.startContinuousRecognition();
-            
-            // Setup media recorder for audio streaming
-            this.setupMediaRecorder(stream);
-            
-            this.setCallState('live');
-            this.addSystemMessage('שיחה החלה - דברו בחופשיות');
-            
-            // Show voice controls
-            if (this.elements.voiceControls) {
-                this.elements.voiceControls.style.display = 'block';
-            }
-            
-        } catch (error) {
-            console.error('Error starting live call:', error);
-            this.setCallState('idle');
-            
-            if (error.name === 'NotAllowedError') {
-                this.showError('נדרשת הרשאה למיקרופון לביצוע שיחה קולית');
-            } else if (error.name === 'NotFoundError') {
-                this.showError('לא נמצא מיקרופון. אנא בדקו את ההתקן');
-            } else {
-                this.showError('שגיאה בהתחלת השיחה. אנא נסו שוב');
-            }
-        }
-    }
-    
-    /**
-     * End live voice call
-     */
-    endLiveCall() {
-        console.log('🔴 Ending live voice call...');
-        
-        this.setCallState('ended');
-        
-        // Clean up speech processing
-        if (this.silenceTimer) {
-            clearTimeout(this.silenceTimer);
-            this.silenceTimer = null;
-        }
-        this.currentTranscript = '';
-        this.lastProcessedTranscript = '';
-        this.isCurrentlySpeaking = false;
-        
-        // Stop speech recognition
-        if (this.recognition && this.isListening) {
-            this.recognition.stop();
-        }
-        
-        // Stop media recorder
-        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-            this.mediaRecorder.stop();
-        }
-        
-        // Close WebSocket
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.close();
-        }
-        
-        // Stop audio playback
-        if (!this.audioPlayer.paused) {
-            this.audioPlayer.pause();
-        }
-        
-        // Hide voice controls
-        if (this.elements.voiceControls) {
-            this.elements.voiceControls.style.display = 'none';
-        }
-        
-        this.setCallState('idle');
-        this.addSystemMessage('השיחה הסתיימה');
-    }
-    
-    /**
-     * Initialize WebSocket connection for live conversation
-     */
-    async initWebSocket() {
-        return new Promise((resolve, reject) => {
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//${window.location.host}/realtime?lang=he&session=${this.sessionId}`;
-            
-            this.ws = new WebSocket(wsUrl);
-            
-            this.ws.onopen = () => {
-                console.log('🔗 WebSocket connected for live call');
-                resolve();
-            };
-            
-            this.ws.onmessage = (event) => {
-                this.handleWebSocketMessage(JSON.parse(event.data));
-            };
-            
-            this.ws.onclose = () => {
-                console.log('🔌 WebSocket disconnected');
-                if (this.isInCall) {
-                    this.showError('חיבור הרשת נותק. אנא התחלו שיחה חדשה');
-                    this.endLiveCall();
-                }
-            };
-            
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                reject(new Error('שגיאה בחיבור לשירות השיחה'));
-            };
-            
-            // Timeout after 5 seconds
-            setTimeout(() => {
-                if (this.ws.readyState !== WebSocket.OPEN) {
-                    reject(new Error('חיבור לשירות השיחה נכשל'));
-                }
-            }, 5000);
-        });
-    }
-    
-    /**
-     * Handle WebSocket messages
-     */
-    handleWebSocketMessage(data) {
-        switch (data.type) {
-            case 'transcript_partial':
-                // Only show partial transcripts if they're substantial
-                if (data.text && data.text.length > 2 && data.confidence > 0.5) {
-                    this.updateLiveTranscript(data.text, false);
-                }
-                break;
-                
-            case 'transcript_final':
-                // Only process final transcripts if they're substantial
-                if (data.text && data.text.length > 2 && data.confidence > 0.4) {
-                    this.updateLiveTranscript(data.text, true);
-                }
-                break;
-                
-            case 'response':
-                this.handleLiveResponse(data);
-                break;
-                
-            case 'connected':
-                console.log('✅ WebSocket connected:', data.message);
-                break;
-                
-            case 'error':
-                console.error('WebSocket error:', data.message);
-                this.showError(data.message || 'שגיאה בשירות השיחה');
-                break;
-        }
-    }
-    
-    /**
-     * Setup media recorder for audio streaming
-     */
-    setupMediaRecorder(stream) {
-        const options = {
-            mimeType: 'audio/webm;codecs=opus',
-            audioBitsPerSecond: 16000
-        };
-        
-        this.mediaRecorder = new MediaRecorder(stream, options);
-        
-        this.mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
-                // Send audio data to server
-                this.ws.send(event.data);
-            }
-        };
-        
-        // Send audio chunks every 250ms for real-time processing
-        this.mediaRecorder.start(250);
-    }
-    
-    /**
-     * Start continuous speech recognition for live transcription
-     */
-    startContinuousRecognition() {
-        if (!this.recognition) return;
-        
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        
-        // Add silence detection
-        this.silenceTimer = null;
-        this.lastSpeechTime = 0;
-        this.currentTranscript = '';
-        this.isCurrentlySpeaking = false;
-        
-        this.recognition.onresult = (event) => {
-            let interimTranscript = '';
-            let finalTranscript = '';
-            
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const result = event.results[i];
-                const transcript = result[0].transcript.trim();
-                const confidence = result[0].confidence || 0.7;
-                
-                // Filter out very low confidence or very short transcripts (likely noise)
-                if (transcript.length < 2 || confidence < 0.4) {
-                    continue;
-                }
-                
-                if (result.isFinal) {
-                    finalTranscript += transcript;
-                } else {
-                    interimTranscript += transcript;
-                }
-            }
-            
-            // Update last speech time
-            if (interimTranscript || finalTranscript) {
-                this.lastSpeechTime = Date.now();
-                this.isCurrentlySpeaking = true;
-                
-                // Clear any existing silence timer
-                if (this.silenceTimer) {
-                    clearTimeout(this.silenceTimer);
-                    this.silenceTimer = null;
-                }
-                
-                // Set silence detection timer (2 seconds of silence)
-                this.silenceTimer = setTimeout(() => {
-                    this.handleSilenceDetected();
-                }, 2000);
-            }
-            
-            // Only show transcripts that are substantial enough
-            if (interimTranscript && interimTranscript.length > 2) {
-                this.currentTranscript = interimTranscript;
-                this.updateLiveTranscript(interimTranscript, false);
-            }
-            
-            if (finalTranscript && finalTranscript.length > 2) {
-                this.currentTranscript = finalTranscript;
-                this.updateLiveTranscript(finalTranscript, true);
-                this.processFinalTranscript(finalTranscript);
-            }
-        };
-        
-        this.recognition.start();
-    }
-    
-    /**
-     * Handle silence detection - user stopped speaking
-     */
-    handleSilenceDetected() {
-        console.log('🔇 Silence detected');
-        this.isCurrentlySpeaking = false;
-        
-        // If we have a current transcript that hasn't been processed, process it now
-        if (this.currentTranscript && this.currentTranscript.length > 3) {
-            console.log('📝 Processing transcript after silence:', this.currentTranscript);
-            this.processFinalTranscript(this.currentTranscript);
-            this.currentTranscript = '';
-        }
-        
-        // Clear silence timer
-        if (this.silenceTimer) {
-            clearTimeout(this.silenceTimer);
-            this.silenceTimer = null;
-        }
-    }
-    
-    /**
-     * Process final transcript and send to WebSocket
-     */
-    processFinalTranscript(transcript) {
-        if (!transcript || transcript.length < 3) {
+        if (text.length > 500) {
+            this.showError('ההודעה ארוכה מדי (מקסימום 500 תווים)');
             return;
         }
         
-        // Avoid processing the same transcript multiple times
-        if (this.lastProcessedTranscript === transcript) {
-            return;
-        }
+        // Clear input
+        this.elements.messageInput.value = '';
+        this.updateSendButton();
         
-        this.lastProcessedTranscript = transcript;
-        console.log('🎯 Processing final transcript:', transcript);
+        // Send message
+        await this.sendMessage(text);
         
-        // Send via WebSocket if available
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                type: 'final_transcript',
-                text: transcript,
-                sessionId: this.sessionId,
-                timestamp: Date.now()
-            }));
-        }
+        // Focus input for next message
+        this.elements.messageInput.focus();
     }
     
     /**
-     * Start push-to-talk recording
-     */
-    startPushToTalk() {
-        if (!this.isInCall || this.isCurrentlySpeaking) {
-            return;
-        }
-        
-        console.log('🎤 Push-to-talk started');
-        this.isCurrentlySpeaking = true;
-        
-        // Visual feedback
-        if (this.elements.pushToTalkBtn) {
-            this.elements.pushToTalkBtn.classList.add('active');
-        }
-        
-        // Clear any existing transcript
-        this.currentTranscript = '';
-        
-        // Start recording if we have a media recorder
-        if (this.mediaRecorder && this.mediaRecorder.state === 'paused') {
-            this.mediaRecorder.resume();
-        }
-        
-        // Start speech recognition fresh
-        if (this.recognition) {
-            try {
-                this.recognition.stop();
-                setTimeout(() => {
-                    if (this.isCurrentlySpeaking) {
-                        this.recognition.start();
-                    }
-                }, 100);
-            } catch (error) {
-                console.error('Error restarting recognition:', error);
-            }
-        }
-    }
-    
-    /**
-     * Stop push-to-talk recording
-     */
-    stopPushToTalk() {
-        if (!this.isCurrentlySpeaking) {
-            return;
-        }
-        
-        console.log('🔇 Push-to-talk stopped');
-        
-        // Visual feedback
-        if (this.elements.pushToTalkBtn) {
-            this.elements.pushToTalkBtn.classList.remove('active');
-        }
-        
-        // Process any current transcript
-        setTimeout(() => {
-            if (this.currentTranscript && this.currentTranscript.length > 3) {
-                this.processFinalTranscript(this.currentTranscript);
-                this.currentTranscript = '';
-            }
-            this.isCurrentlySpeaking = false;
-        }, 500);
-    }
-    
-    /**
-     * Update live transcript display
-     */
-    updateLiveTranscript(text, isFinal) {
-        if (!text.trim()) return;
-        
-        // Find or create live transcript element
-        let liveElement = document.getElementById('liveTranscript');
-        
-        if (!liveElement && !isFinal) {
-            // Create live transcript element
-            liveElement = document.createElement('div');
-            liveElement.id = 'liveTranscript';
-            liveElement.className = 'message user-message live-transcript';
-            liveElement.innerHTML = `
-                <div class="message-bubble live-bubble">
-                    <span class="live-text">${text}</span>
-                    <span class="live-indicator">🎤</span>
-                </div>
-            `;
-            this.elements.chatMessages.appendChild(liveElement);
-            this.scrollToBottom();
-        } else if (liveElement && !isFinal) {
-            // Update live transcript
-            const liveText = liveElement.querySelector('.live-text');
-            if (liveText) {
-                liveText.textContent = text;
-            }
-        } else if (isFinal) {
-            // Convert to final message
-            if (liveElement) {
-                liveElement.remove();
-            }
-            this.addMessage('user', text);
-        }
-    }
-    
-    /**
-     * Handle live response from server
-     */
-    async handleLiveResponse(data) {
-        try {
-            // Add assistant text message
-            this.addMessage('assistant', data.text);
-            
-            // Play pre-recorded audio if available
-            if (data.audioUrl) {
-                await this.playResponseAudio(data.audioUrl);
-            }
-            
-        } catch (error) {
-            console.error('Error handling live response:', error);
-            this.showError('שגיאה בהשמעת התשובה');
-        }
-    }
-    
-    /**
-     * Play pre-recorded response audio
-     */
-    async playResponseAudio(audioUrl) {
-        try {
-            this.audioPlayer.src = audioUrl;
-            
-            // Show audio playing indicator
-            this.addSystemMessage('🔊 משמיע תשובה...');
-            
-            await new Promise((resolve, reject) => {
-                this.audioPlayer.onloadeddata = resolve;
-                this.audioPlayer.onerror = reject;
-                this.audioPlayer.load();
-            });
-            
-            await this.audioPlayer.play();
-            
-            this.audioPlayer.onended = () => {
-                console.log('🔇 Audio playback finished');
-                // Remove audio indicator
-                this.removeLastSystemMessage();
-            };
-            
-        } catch (error) {
-            console.error('Error playing audio:', error);
-            this.showError('שגיאה בהשמעת התשובה הקולית');
-        }
-    }
-    
-    /**
-     * Set call state and update UI
-     */
-    setCallState(state) {
-        this.callState = state;
-        this.isInCall = (state === 'connecting' || state === 'live');
-        this.updateCallUI();
-    }
-    
-    /**
-     * Update UI based on call state
-     */
-    updateCallUI() {
-        const button = this.elements.startChatBtn;
-        const icon = button.querySelector('.chat-icon');
-        const hint = this.elements.circleHint;
-        
-        button.classList.remove('listening', 'connecting', 'in-call');
-        
-        switch (this.callState) {
-            case 'connecting':
-                button.classList.add('connecting');
-                button.setAttribute('aria-label', 'מתחבר לשיחה...');
-                if (hint) hint.textContent = 'מתחבר...';
-                if (icon) icon.innerHTML = `<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="25.13" stroke-dashoffset="25.13" class="connecting-spinner"/>`;
-                break;
-                
-            case 'live':
-                button.classList.add('in-call');
-                button.setAttribute('aria-label', 'שיחה פעילה - לחצו לסיום');
-                if (hint) hint.textContent = 'שיחה פעילה - לחצו לסיום';
-                if (icon) icon.innerHTML = `<path d="M6 2L3 6v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6l-3-4H6zm0 2h12l2 2v12H4V6l2-2z" fill="currentColor"/><path d="M8 10h8v2H8v-2zm0 4h8v2H8v-2z" fill="currentColor"/>`;
-                break;
-                
-            case 'ended':
-                if (hint) hint.textContent = 'השיחה הסתיימה';
-                setTimeout(() => this.setCallState('idle'), 2000);
-                break;
-                
-            default: // idle
-                button.setAttribute('aria-label', 'התחל שיחה קולית');
-                if (hint) hint.textContent = 'לחצו כדי לדבר איתי';
-                if (icon) icon.innerHTML = `
-                    <path d="M8.5 19H8C4.13401 19 1 15.866 1 12C1 8.13401 4.13401 5 8 5H16C19.866 5 23 8.13401 23 12C23 15.866 19.866 19 16 19H15.5M8.5 19L12 22.5L15.5 19M8.5 19H15.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <circle cx="9" cy="12" r="1" fill="currentColor"/>
-                    <circle cx="12" cy="12" r="1" fill="currentColor"/>
-                    <circle cx="15" cy="12" r="1" fill="currentColor"/>
-                `;
-        }
-    }
-    
-    /**
-     * Add system message to chat
-     */
-    addSystemMessage(text) {
-        const messageEl = document.createElement('div');
-        messageEl.className = 'message system-message';
-        messageEl.innerHTML = `<div class="system-bubble">${text}</div>`;
-        this.elements.chatMessages.appendChild(messageEl);
-        this.scrollToBottom();
-    }
-    
-    /**
-     * Remove last system message
-     */
-    removeLastSystemMessage() {
-        const systemMessages = this.elements.chatMessages.querySelectorAll('.system-message');
-        if (systemMessages.length > 0) {
-            systemMessages[systemMessages.length - 1].remove();
-        }
-    }
-    
-    /**
-     * Send message (unified method for text and voice input)
+     * Send message to API and handle response
      */
     async sendMessage(text) {
         if (!text || this.isProcessing) {
@@ -889,10 +406,8 @@ class HebrewChatWidget {
             this.hideLoading();
             this.addMessage('assistant', response.answer);
             
-            // If we have audio URL, play it
-            if (response.audioUrl) {
-                await this.playResponseAudio(response.audioUrl);
-            }
+            // Play voice response (tries voiceUrl first, falls back to text-to-speech)
+            this.playVoiceResponse(response.voiceUrl, response.answer);
             
         } catch (error) {
             console.error('Chat error:', error);
@@ -904,65 +419,37 @@ class HebrewChatWidget {
     }
     
     /**
-     * Handle sending a message from text input
-     */
-    async handleSendMessage() {
-        const text = this.elements.messageInput.value.trim();
-        
-        if (!text) {
-            return;
-        }
-        
-        // Clear input
-        this.elements.messageInput.value = '';
-        
-        // Send message using unified method
-        await this.sendMessage(text);
-        
-        // Focus input for next message
-        this.elements.messageInput.focus();
-    }
-    
-    /**
      * Send message to API
      */
-    async sendToAPI(query) {
-        const response = await fetch(`${this.API_BASE}/api/ask`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                query,
-                sessionId: this.sessionId
-            })
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            let errorMessage = 'שגיאה בשרת. אנא נסו שוב מאוחר יותר.';
+    async sendToAPI(query, retryCount = 0) {
+        try {
+            const response = await fetch(`${this.API_BASE}/api/ask`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    query,
+                    sessionId: this.sessionId
+                })
+            });
             
-            if (response.status === 429) {
-                errorMessage = 'יותר מדי בקשות. אנא המתינו רגע ונסו שוב.';
-            } else if (response.status === 503) {
-                errorMessage = 'השירות אינו זמין כרגע. אנא נסו שוב מאוחר יותר.';
-            } else if (response.status === 408) {
-                errorMessage = 'הבקשה לקחה יותר מדי זמן. אנא נסו שוב.';
-            } else if (errorData.error) {
-                errorMessage = errorData.error;
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
             
-            throw new Error(errorMessage);
+            return await response.json();
+        } catch (error) {
+            // Retry on network errors (server restart, etc.)
+            if (retryCount < 2 && (error.name === 'TypeError' || error.message.includes('Load failed'))) {
+                console.log(`🔄 Network error, retrying... (${retryCount + 1}/3)`);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                return this.sendToAPI(query, retryCount + 1);
+            }
+            throw error;
         }
-        
-        const data = await response.json();
-        
-        if (!data.answer) {
-            throw new Error('לא התקבלה תשובה מהשרת');
-        }
-        
-        return data;
     }
+    
     
     /**
      * Add a message to the chat
@@ -1063,6 +550,99 @@ class HebrewChatWidget {
     }
     
     /**
+     * Play voice response from URL or fallback to text-to-speech
+     */
+    playVoiceResponse(voiceUrl, text) {
+        // Only try to play if user has interacted with the page
+        if (!this.isInConversation) {
+            return;
+        }
+
+        if (voiceUrl) {
+            // Try to play the audio file first
+            try {
+                console.log(`🔊 Playing voice response: ${voiceUrl}`);
+                const audio = new Audio(voiceUrl);
+                
+                audio.play().catch(error => {
+                    console.warn('Voice file failed, using text-to-speech fallback:', error);
+                    this.speakText(text);
+                });
+                
+                // Fallback to TTS if file doesn't load within 2 seconds
+                setTimeout(() => {
+                    if (audio.readyState === 0) { // No data loaded
+                        console.log('Voice file timeout, using text-to-speech fallback');
+                        this.speakText(text);
+                    }
+                }, 2000);
+                
+            } catch (error) {
+                console.warn('Error creating audio element, using text-to-speech:', error);
+                this.speakText(text);
+            }
+        } else {
+            // No voice URL provided, use text-to-speech
+            this.speakText(text);
+        }
+    }
+
+    /**
+     * Use browser text-to-speech to speak text in Hebrew
+     */
+    speakText(text) {
+        if (!text || !window.speechSynthesis) {
+            return;
+        }
+
+        try {
+            // Cancel any ongoing speech
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            // Try to find and use a Hebrew voice
+            const voices = window.speechSynthesis.getVoices();
+            console.log(`🎤 Total voices available: ${voices.length}`);
+            
+            const hebrewVoice = voices.find(voice => 
+                voice.lang.startsWith('he') || 
+                voice.lang.includes('IL') || 
+                voice.name.toLowerCase().includes('hebrew')
+            );
+            
+            // If no Hebrew voice, try to find any RTL or middle-eastern voice
+            const alternativeVoice = !hebrewVoice ? voices.find(voice => 
+                voice.lang.includes('ar') || // Arabic voices sometimes work better for Hebrew
+                voice.lang.includes('TR') || // Turkish
+                voice.name.toLowerCase().includes('middle') ||
+                voice.name.toLowerCase().includes('east')
+            ) : null;
+            
+            if (hebrewVoice) {
+                utterance.voice = hebrewVoice;
+                console.log(`🗣️ Using Hebrew voice: ${hebrewVoice.name} (${hebrewVoice.lang})`);
+            } else if (alternativeVoice) {
+                utterance.voice = alternativeVoice;
+                console.log(`🗣️ Using alternative RTL voice: ${alternativeVoice.name} (${alternativeVoice.lang})`);
+            } else {
+                console.log(`⚠️ No Hebrew or RTL voice found, using default with he-IL lang`);
+                console.log(`Available voices: ${voices.slice(0, 3).map(v => `${v.name}(${v.lang})`).join(', ')}...`);
+            }
+            
+            utterance.lang = 'he-IL'; // Hebrew language
+            utterance.rate = 0.8; // Slower for Hebrew clarity
+            utterance.pitch = 1;
+            utterance.volume = 1;
+            
+            console.log(`🗣️ Speaking text: ${text.substring(0, 50)}...`);
+            window.speechSynthesis.speak(utterance);
+        } catch (error) {
+            console.warn('Text-to-speech failed:', error);
+        }
+    }
+    
+    /**
      * Save messages to session storage
      */
     saveMessagesToStorage() {
@@ -1147,7 +727,13 @@ class HebrewChatWidget {
 
 // Initialize the chat widget when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.hebrewChat = new HebrewChatWidget();
+    console.log('DOM Content Loaded - initializing Hebrew Chat Widget');
+    try {
+        window.hebrewChat = new HebrewChatWidget();
+        console.log('Hebrew Chat Widget created successfully');
+    } catch (error) {
+        console.error('Error creating Hebrew Chat Widget:', error);
+    }
 });
 
 // Handle visibility change to pause/resume functionality

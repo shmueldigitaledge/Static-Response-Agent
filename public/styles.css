@@ -205,7 +205,7 @@ body {
     100% { transform: rotate(360deg); }
 }
 
-/* Legacy listening state (kept for compatibility) */
+/* Listening/Recording state */
 .circle-button.listening {
     background: linear-gradient(135deg, rgba(255, 82, 82, 0.3) 0%, rgba(255, 107, 107, 0.2) 100%);
     border-color: rgba(255, 82, 82, 0.8);
@@ -247,6 +247,39 @@ body {
     }
 }
 
+/* In-conversation state (ready to record again) */
+.circle-button.in-conversation {
+    background: linear-gradient(135deg, rgba(255, 193, 7, 0.3) 0%, rgba(255, 152, 0, 0.2) 100%);
+    border-color: rgba(255, 193, 7, 0.8);
+    animation: conversation-glow 2s ease-in-out infinite;
+}
+
+.circle-button.in-conversation:hover {
+    border-color: rgba(255, 193, 7, 0.9);
+}
+
+.circle-button.in-conversation .chat-icon {
+    color: #ffc107;
+}
+
+@keyframes conversation-glow {
+    0%, 100% {
+        box-shadow: 
+            0 8px 32px rgba(0, 0, 0, 0.2),
+            inset 0 2px 4px rgba(255, 255, 255, 0.3),
+            inset 0 -2px 4px rgba(0, 0, 0, 0.1),
+            0 0 0 0 rgba(255, 193, 7, 0.3);
+    }
+    50% {
+        box-shadow: 
+            0 8px 32px rgba(0, 0, 0, 0.2),
+            inset 0 2px 4px rgba(255, 255, 255, 0.3),
+            inset 0 -2px 4px rgba(0, 0, 0, 0.1),
+            0 0 0 10px rgba(255, 193, 7, 0.1);
+    }
+}
+
+
 .circle-hint {
     font-size: 1.1rem;
     color: rgba(255, 255, 255, 0.9);
@@ -255,68 +288,6 @@ body {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* Voice Controls */
-.voice-controls {
-    display: flex;
-    justify-content: center;
-    margin-top: 1rem;
-}
-
-.push-to-talk-btn {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%);
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-radius: 25px;
-    color: white;
-    padding: 12px 20px;
-    font-size: 0.9rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-    user-select: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.push-to-talk-btn:hover {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.2) 100%);
-    border-color: rgba(255, 255, 255, 0.5);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-}
-
-.push-to-talk-btn:active,
-.push-to-talk-btn.active {
-    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-    border-color: #4CAF50;
-    transform: translateY(0);
-    box-shadow: 0 2px 10px rgba(76, 175, 80, 0.4);
-}
-
-.push-to-talk-btn.active .ptt-text {
-    color: white;
-}
-
-.push-to-talk-btn.active .ptt-icon {
-    animation: ptt-pulse 1s ease-in-out infinite;
-}
-
-@keyframes ptt-pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.2); }
-}
-
-.ptt-text {
-    font-family: inherit;
-    font-size: inherit;
-}
-
-.ptt-icon {
-    font-size: 1.1em;
-}
 
 /* Chat Container */
 .chat-container {
@@ -539,57 +510,6 @@ body {
     font-weight: 400;
 }
 
-.mic-button {
-    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-    color: white;
-    border: none;
-    border-radius: 18px;
-    padding: 0.75rem;
-    font-size: 1.2rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    min-width: 50px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.mic-button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    background: linear-gradient(135deg, #45a049 0%, #3d8b40 100%);
-}
-
-.mic-button:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-}
-
-.mic-button.recording {
-    background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
-    animation: recording-pulse 1s ease-in-out infinite;
-}
-
-.mic-button.recording:hover {
-    background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
-}
-
-@keyframes recording-pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-}
-
-.mic-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.mic-button:focus-visible {
-    outline: 2px solid rgba(76, 175, 80, 0.8);
-    outline-offset: 2px;
-}
 
 .send-button {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
