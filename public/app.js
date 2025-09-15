@@ -667,30 +667,27 @@ class HebrewChatWidget {
             speakerBtn.className = 'speaker-button';
             speakerBtn.setAttribute('aria-label', 'השמע הודעה');
             speakerBtn.setAttribute('title', 'לחצו להשמעת ההודעה');
-            speakerBtn.style.cssText = 'background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; width: 32px !important; height: 32px !important; border-radius: 50% !important; border: 2px solid white !important; flex-shrink: 0 !important; color: white !important; cursor: pointer !important;';
-            speakerBtn.innerHTML = `🔊`;
+            speakerBtn.style.cssText = 'background: white !important; width: 32px !important; height: 32px !important; border-radius: 50% !important; border: 2px solid #333 !important; flex-shrink: 0 !important; color: #333 !important; cursor: pointer !important;';
+            speakerBtn.innerHTML = `
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Speaker base -->
+                    <polygon points="11,5 6,9 2,9 2,15 6,15 11,19 11,5" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+                    <!-- Sound waves -->
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M18.36 5.64a9 9 0 0 1 0 12.73" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            `;
             
-            // Add click handler to query mock_db for voice
+            // Add click handler using the same approach as the working example
             const text = message.text;
-            speakerBtn.onclick = async function(e) {
+            speakerBtn.onclick = function(e) {
                 e.stopPropagation();
-                console.log('🔊 Speaker button clicked, querying mock_db for voice:', text.substring(0, 50));
-                
+                console.log('🔊 Speaker button clicked:', text.substring(0, 50));
+
+                // Use the same simple approach as the working example message
                 if (window.hebrewChat) {
-                    try {
-                        // Query the API to get voice URL for this message text
-                        const response = await window.hebrewChat.sendToAPI(text);
-                        console.log('🎵 Got voice response from API:', response.voiceUrl);
-                        
-                        // Play the voice from the API response
-                        window.hebrewChat.playVoiceResponse(response.voiceUrl, text);
-                    } catch (error) {
-                        console.error('❌ Error querying voice for message:', error);
-                        // Fallback to TTS
-                        window.hebrewChat.playVoiceResponse(null, text);
-                    }
-                } else {
-                    console.error('❌ window.hebrewChat not available');
+                    // Use voiceUrl if available, otherwise pass null for TTS fallback
+                    window.hebrewChat.playVoiceResponse(message.voiceUrl || null, text);
                 }
             };
             
@@ -768,39 +765,30 @@ class HebrewChatWidget {
     
     /**
      * Play voice response from URL or fallback to text-to-speech
+     * Simplified version based on working example
      */
     playVoiceResponse(voiceUrl, text) {
         console.log('🔊 playVoiceResponse called with:', { voiceUrl, text: text?.substring(0, 50) });
 
         if (voiceUrl) {
-            // Try to play the audio file first
+            // Simple audio playback like the working example
             try {
-                console.log(`🎵 Attempting to play audio file: ${voiceUrl}`);
+                console.log(`🎵 Playing audio file: ${voiceUrl}`);
                 const audio = new Audio(voiceUrl);
-                
-                audio.play().then(() => {
-                    console.log('🎵 Audio playback started successfully');
-                }).catch(error => {
-                    console.warn('🎵 Voice file play failed, using text-to-speech fallback:', error);
-                    console.warn('🎵 Error details:', error.name, error.message);
+                audio.volume = 1.0;
+
+                audio.play().catch(error => {
+                    console.warn('🎵 Audio play failed, using TTS:', error);
                     this.speakText(text);
                 });
-                
-                // Fallback to TTS if file doesn't load within 2 seconds
-                setTimeout(() => {
-                    if (audio.readyState === 0) { // No data loaded
-                        console.log('Voice file timeout, using text-to-speech fallback');
-                        this.speakText(text);
-                    }
-                }, 2000);
-                
+
             } catch (error) {
-                console.warn('Error creating audio element, using text-to-speech:', error);
+                console.warn('🎵 Error with audio, using TTS:', error);
                 this.speakText(text);
             }
         } else {
-            // No voice URL provided, use text-to-speech
-            console.log('🎵 No voiceUrl provided, using text-to-speech');
+            // No voice URL, use text-to-speech
+            console.log('🎵 No voiceUrl, using TTS');
             this.speakText(text);
         }
     }
@@ -818,8 +806,16 @@ class HebrewChatWidget {
         try {
             // Cancel any ongoing speech
             window.speechSynthesis.cancel();
-            
+
             const utterance = new SpeechSynthesisUtterance(text);
+
+            // Add error handling for speech synthesis
+            utterance.onerror = (event) => {
+                console.warn('🎤 Text-to-speech error:', event.error);
+                if (event.error === 'not-allowed') {
+                    this.showError('נדרש אישור להשמעת קול. אנא אפשרו השמעת קול בדפדפן ונסו שוב.');
+                }
+            };
             
             // Try to find and use a Hebrew voice
             const voices = window.speechSynthesis.getVoices();
